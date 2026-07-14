@@ -12,10 +12,13 @@ the work with bounded concurrency, retries, reconciliation, and observability.
 ## Build
 
 ```sh
-go build ./...
+go build ./...      # or: make build   (outputs ./bin/symphony and the MCP server)
 ```
 
 Requires Go 1.24+ (the module uses the 1.25 toolchain, fetched automatically by `go` when needed).
+
+Run `make help` to list common developer commands (`build`, `run`, `test`, `test-race`, `fmt`,
+`vet`, `tidy`, `ci`, …). `make ci` runs the same checks as the GitHub Actions workflow.
 
 ## Run
 

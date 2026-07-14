@@ -1,0 +1,9 @@
+# Build output
+/bin/
+
+# Test / coverage artifacts
+coverage.out
+*.test
+
+# Local operator config (kept out of version control)
+/WORKFLOW.md
