@@ -17,6 +17,9 @@ go build ./...      # or: make build   (outputs ./bin/symphony and the MCP serve
 
 Requires Go 1.24+ (the module uses the 1.25 toolchain, fetched automatically by `go` when needed).
 
+Prefer a prebuilt binary? See [`docs/QUICKSTART_LINUX.md`](docs/QUICKSTART_LINUX.md) for
+installing and running the `linux/amd64` release from GitHub Releases — no Go toolchain required.
+
 Run `make help` to list common developer commands (`build`, `run`, `test`, `test-race`, `fmt`,
 `vet`, `tidy`, `ci`, …). `make ci` runs the same checks as the GitHub Actions workflow.
 
