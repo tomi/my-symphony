@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: Build, format, lint & test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Check formatting (gofmt)
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt-formatted:"
+            echo "$unformatted"
+            echo "Run 'gofmt -w .' to fix."
+            exit 1
+          fi
+
+      - name: Verify go.mod is tidy
+        run: |
+          go mod tidy
+          if ! git diff --quiet -- go.mod go.sum; then
+            echo "go.mod / go.sum are not tidy. Run 'go mod tidy' and commit the result."
+            git diff -- go.mod go.sum
+            exit 1
+          fi
+
+      - name: Build
+        run: go build ./...
+
+      - name: Lint (go vet)
+        run: go vet ./...
+
+      - name: Test (with race detector)
+        run: go test -race ./...
