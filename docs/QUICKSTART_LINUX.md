@@ -17,82 +17,47 @@ If you'd rather build from source, see the [README](../README.md#build) instead.
   `PATH`. Symphony launches `claude` as a subprocess for each issue; verify with
   `claude --version`.
 
-## 1. Download the release
+## 1. Install and configure
 
-Grab the latest `linux/amd64` archive and its checksum from the
-[Releases page](https://github.com/tomi/my-symphony/releases/latest), or from the
-command line. Set `VERSION` to the tag you want (e.g. `v1.2.3`):
+Set `VERSION` to the release tag you want (see the
+[Releases page](https://github.com/tomi/my-symphony/releases/latest)), then
+download, verify, install, and configure:
 
 ```sh
 VERSION=v1.2.3
 BASE="https://github.com/tomi/my-symphony/releases/download/${VERSION}"
 ARCHIVE="symphony_${VERSION}_linux_amd64.tar.gz"
 
+# Download the linux/amd64 archive and its checksum.
 curl -fL -O "${BASE}/${ARCHIVE}"
 curl -fL -O "${BASE}/${ARCHIVE}.sha256"
-```
 
-## 2. Verify the checksum
-
-```sh
+# Verify — stop if this prints anything other than "OK".
 sha256sum -c "${ARCHIVE}.sha256"
-# symphony_v1.2.3_linux_amd64.tar.gz: OK
-```
 
-If this prints anything other than `OK`, stop — do not run the binary.
-
-## 3. Extract and install
-
-The archive expands into a `symphony_<version>_linux_amd64/` directory
-containing two binaries (`symphony`, `symphony-lineargql-mcp`) and a copy of the
-README. Install them somewhere on your `PATH`:
-
-```sh
+# Extract (yields symphony_<version>_linux_amd64/) and install onto PATH.
+# ~/.local/bin must be on your PATH; use /usr/local/bin with sudo instead.
 tar -xzf "${ARCHIVE}"
-cd "symphony_${VERSION}_linux_amd64"
-
-# Install to ~/.local/bin (or /usr/local/bin with sudo).
 mkdir -p ~/.local/bin
-install -m 0755 symphony symphony-lineargql-mcp ~/.local/bin/
+install -m 0755 "symphony_${VERSION}_linux_amd64/symphony" \
+  "symphony_${VERSION}_linux_amd64/symphony-lineargql-mcp" ~/.local/bin/
+symphony --help   # confirm it runs
 
-symphony --help    # confirm it runs
-```
-
-Make sure `~/.local/bin` is on your `PATH` (add `export PATH="$HOME/.local/bin:$PATH"`
-to your shell profile if not).
-
-> `symphony-lineargql-mcp` is optional — it's a small MCP server that exposes a
-> `linear_graphql` tool to the Claude session. Install it only if you plan to
-> wire it into `claude.command`. See the [README](../README.md#linear_graphql-tool-optional).
-
-## 4. Configure
-
-Symphony is driven by a `WORKFLOW.md` file (YAML front matter + a Liquid prompt
-body). Start from the example bundled in the repo:
-
-```sh
-# From a checkout of the repo, or download WORKFLOW.example.md from GitHub:
+# Configure: grab the example workflow and export your Linear API key.
 curl -fL -o WORKFLOW.md \
   https://raw.githubusercontent.com/tomi/my-symphony/main/WORKFLOW.example.md
-```
-
-Then edit `WORKFLOW.md` and, at minimum, set:
-
-- `tracker.project_slug` — the Linear project to poll.
-- `tracker.active_states` / `tracker.terminal_states` — the states that gate
-  dispatch and completion.
-- `workspace.root` — where per-issue workspaces are created (default
-  `~/symphony_workspaces`).
-- `hooks.after_create` — how to clone/bootstrap the repo for each issue.
-
-Provide your Linear API key via the environment (the example references
-`$LINEAR_API_KEY`):
-
-```sh
 export LINEAR_API_KEY=lin_api_...
 ```
 
-## 5. Run
+Now edit `WORKFLOW.md` and, at minimum, set `tracker.project_slug`,
+`tracker.active_states` / `tracker.terminal_states`, `workspace.root`, and the
+`hooks.after_create` hook that clones/bootstraps the repo for each issue.
+
+> `symphony-lineargql-mcp` is optional — a small MCP server exposing a
+> `linear_graphql` tool to the Claude session. Skip it unless you wire it into
+> `claude.command`. See the [README](../README.md#linear_graphql-tool-optional).
+
+## 2. Run
 
 ```sh
 symphony ./WORKFLOW.md
