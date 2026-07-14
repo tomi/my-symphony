@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version/tag name for the release artifacts (e.g. v1.2.3)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release-linux-amd64:
+    name: Build linux/amd64 release
+    runs-on: ubuntu-latest
+    env:
+      GOOS: linux
+      GOARCH: amd64
+      CGO_ENABLED: "0"
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version="${{ github.event.inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Building release ${version} for ${GOOS}/${GOARCH}"
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Build linux/amd64 binaries
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          dist="dist/symphony_${version}_${GOOS}_${GOARCH}"
+          mkdir -p "$dist"
+          go build -trimpath -ldflags "-s -w" -o "$dist/symphony" ./cmd/symphony
+          go build -trimpath -ldflags "-s -w" -o "$dist/symphony-lineargql-mcp" ./cmd/symphony-lineargql-mcp
+          cp README.md "$dist/"
+
+      - name: Package archive and checksums
+        id: package
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          name="symphony_${version}_${GOOS}_${GOARCH}"
+          tar -C dist -czf "dist/${name}.tar.gz" "$name"
+          ( cd dist && sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256" )
+          echo "archive=dist/${name}.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "checksum=dist/${name}.tar.gz.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: symphony-linux-amd64
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.checksum }}
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          files: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.checksum }}
+          fail_on_unmatched_files: true
+          generate_release_notes: true
