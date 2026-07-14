@@ -48,10 +48,13 @@ func fakeLinear(t *testing.T, candidateFetched, refreshFetched *int32) *httptest
 		_ = json.Unmarshal(body, &req)
 
 		// State refresh (running reconciliation / per-turn refresh) uses $ids.
+		// Keep the issue active so the worker completes its (single) turn and
+		// exits normally rather than being cancelled by terminal reconciliation
+		// mid-run (which would interrupt the after_create hook).
 		if strings.Contains(req.Query, "$ids") {
 			atomic.AddInt32(refreshFetched, 1)
 			w.Write([]byte(`{"data":{"issues":{"nodes":[
-				{"id":"i1","identifier":"AB-1","title":"t","state":{"name":"Done"},"labels":{"nodes":[]}}
+				{"id":"i1","identifier":"AB-1","title":"t","state":{"name":"In Progress"},"labels":{"nodes":[]}}
 			],"pageInfo":{"hasNextPage":false}}}}`))
 			return
 		}
@@ -95,6 +98,10 @@ func TestCLI_FullLifecycle(t *testing.T) {
 	dir := t.TempDir()
 	claudeCmd := `printf '%s\n' '{"type":"system","subtype":"init","session_id":"sess-1"}' ` +
 		`'{"type":"result","is_error":false,"usage":{"input_tokens":3,"output_tokens":1}}'`
+	// after_create writes a marker OUTSIDE the workspace root so that terminal
+	// workspace cleanup (the issue goes Done) cannot remove our evidence that a
+	// workspace was created and its hook ran.
+	marker := filepath.Join(dir, "created.marker")
 	workflow := fmt.Sprintf(`---
 tracker:
   kind: linear
@@ -107,6 +114,10 @@ polling:
   interval_ms: 200
 workspace:
   root: %s
+hooks:
+  after_create: "printf created > %s"
+agent:
+  max_turns: 1
 claude:
   command: "%s"
   read_timeout_ms: 2000
@@ -114,7 +125,7 @@ claude:
   stall_timeout_ms: 0
 ---
 Work on {{ issue.identifier }}: {{ issue.title }}
-`, srv.URL, filepath.Join(dir, "ws"), strings.ReplaceAll(claudeCmd, `"`, `\"`))
+`, srv.URL, filepath.Join(dir, "ws"), marker, strings.ReplaceAll(claudeCmd, `"`, `\"`))
 
 	wfPath := filepath.Join(dir, "WORKFLOW.md")
 	if err := os.WriteFile(wfPath, []byte(workflow), 0o644); err != nil {
@@ -127,10 +138,17 @@ Work on {{ issue.identifier }}: {{ issue.title }}
 		t.Fatal(err)
 	}
 
-	// Wait until the loop has fetched candidates and refreshed a running issue.
-	deadline := time.Now().Add(10 * time.Second)
+	// Poll until a workspace was created (marker present) and the loop has
+	// fetched candidates and refreshed a running issue. Polling with a timeout
+	// avoids racing the worker's asynchronous startup.
+	deadline := time.Now().Add(15 * time.Second)
+	workspaceCreated := false
 	for time.Now().Before(deadline) {
-		if atomic.LoadInt32(&candidateFetched) >= 1 && atomic.LoadInt32(&refreshFetched) >= 1 {
+		if _, err := os.Stat(marker); err == nil {
+			workspaceCreated = true
+		}
+		if workspaceCreated &&
+			atomic.LoadInt32(&candidateFetched) >= 1 && atomic.LoadInt32(&refreshFetched) >= 1 {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -143,10 +161,9 @@ Work on {{ issue.identifier }}: {{ issue.title }}
 		_ = cmd.Process.Kill()
 		t.Fatalf("running-issue refresh never happened (worker did not dispatch)")
 	}
-
-	// A workspace should have been created for the dispatched issue.
-	if _, err := os.Stat(filepath.Join(dir, "ws", "AB-1")); err != nil {
-		t.Errorf("workspace for AB-1 not created: %v", err)
+	if !workspaceCreated {
+		_ = cmd.Process.Kill()
+		t.Fatalf("workspace for AB-1 was never created (after_create marker missing)")
 	}
 
 	// Graceful shutdown should exit zero.
