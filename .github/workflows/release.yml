@@ -1,9 +1,6 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       version:
@@ -36,11 +33,7 @@ jobs:
       - name: Determine version
         id: version
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            version="${{ github.event.inputs.version }}"
-          else
-            version="${GITHUB_REF_NAME}"
-          fi
+          version="${{ github.event.inputs.version }}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "Building release ${version} for ${GOOS}/${GOARCH}"
 
@@ -76,7 +69,6 @@ jobs:
           if-no-files-found: error
 
       - name: Publish GitHub release
-        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.version }}
