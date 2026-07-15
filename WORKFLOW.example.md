@@ -37,10 +37,25 @@ claude:
   # High-trust default: auto-approve command/file changes for the session.
   # Harden by editing these flags (see SPEC.md §15.5).
   command: claude -p --output-format stream-json --verbose --dangerously-skip-permissions
+  # Global defaults for every state; override per-state under `states` below.
+  # model appends `--model <model>`; reasoning_effort appends `--effort <level>`.
+  model: sonnet                 # optional; omit to use the CLI default
+  reasoning_effort: medium      # optional; low | medium | high | xhigh | max
   resume_across_turns: true
   turn_timeout_ms: 3600000
   read_timeout_ms: 5000
   stall_timeout_ms: 300000
+
+# Per-status overrides (SPEC §5.3.7). Keyed by tracker status name; unset fields
+# fall back to the global values above. Here an "AI Review" status is picked up
+# with a stronger model, higher effort, review-specific instructions, and a
+# tighter turn budget.
+states:
+  "AI Review":
+    model: opus
+    reasoning_effort: high
+    prompt: prompts/review.md   # path relative to this file; replaces the body below
+    max_turns: 5
 
 # Optional HTTP dashboard/API extension (SPEC §13.7). Omit to disable, or pass
 # --port on the CLI (which overrides this).

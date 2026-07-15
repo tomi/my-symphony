@@ -15,6 +15,7 @@ import (
 	"github.com/tomi/my-symphony/internal/agent"
 	"github.com/tomi/my-symphony/internal/agent/claude"
 	"github.com/tomi/my-symphony/internal/config"
+	"github.com/tomi/my-symphony/internal/domain"
 	"github.com/tomi/my-symphony/internal/httpserver"
 	"github.com/tomi/my-symphony/internal/logging"
 	"github.com/tomi/my-symphony/internal/orchestrator"
@@ -130,15 +131,20 @@ func buildFactories(logger *logging.Logger) orchestrator.Factories {
 				TimeoutMs:    cfg.Hooks.TimeoutMs,
 			}, logger)
 		},
-		Runner: func(cfg *config.Config, template string, ws orchestrator.Workspace, tr tracker.Client) agent.Runner {
+		Runner: func(cfg *config.Config, template string, ws orchestrator.Workspace, tr tracker.Client, issue domain.Issue) agent.Runner {
 			wm, ok := ws.(agent.WorkspaceManager)
 			if !ok {
 				// The concrete workspace.Manager satisfies agent.WorkspaceManager;
 				// this guards against a mismatched factory wiring.
 				panic("workspace does not implement agent.WorkspaceManager")
 			}
+			// Resolve per-status overrides from the dispatched issue's state
+			// (SPEC §5.3.7). Unset overrides fall back to the global values.
+			state := issue.State
 			client := claude.NewClient(claude.Config{
 				Command:           cfg.Claude.Command,
+				Model:             cfg.ModelForState(state),
+				ReasoningEffort:   cfg.ReasoningEffortForState(state),
 				ResumeAcrossTurns: cfg.Claude.ResumeAcrossTurns,
 				TurnTimeoutMs:     cfg.Claude.TurnTimeoutMs,
 				ReadTimeoutMs:     cfg.Claude.ReadTimeoutMs,
@@ -147,9 +153,9 @@ func buildFactories(logger *logging.Logger) orchestrator.Factories {
 				Workspace:    wm,
 				Backend:      claude.NewBackend(client),
 				Tracker:      tr,
-				Template:     template,
+				Template:     cfg.PromptForState(state, template),
 				ActiveStates: cfg.Tracker.ActiveStates,
-				MaxTurns:     cfg.Agent.MaxTurns,
+				MaxTurns:     cfg.MaxTurnsForState(state),
 				Logger:       logger,
 			})
 		},

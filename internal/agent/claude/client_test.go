@@ -80,6 +80,39 @@ func TestRunTurn_ResumeAppended(t *testing.T) {
 	}
 }
 
+func TestRunTurn_ModelAndEffortAppended(t *testing.T) {
+	ws := t.TempDir()
+	cmdFile := filepath.Join(ws, "cmdline.txt")
+	cmd := `tr '\0' ' ' < /proc/$$/cmdline > ` + cmdFile + `; printf '{"type":"result","is_error":false}\n'`
+	sess := &Session{Workspace: ws, Identifier: "AB-1", SessionID: "sess-7"}
+	_, _, err := runTurn(t, Config{
+		Command:           cmd,
+		Model:             "opus",
+		ReasoningEffort:   "high",
+		ResumeAcrossTurns: true,
+		TurnTimeoutMs:     5000,
+		ReadTimeoutMs:     2000,
+	}, ws, sess)
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	line, _ := os.ReadFile(cmdFile)
+	got := string(line)
+	for _, want := range []string{"--model 'opus'", "--effort 'high'", "--resume sess-7"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in command line, got %q", want, got)
+		}
+	}
+}
+
+func TestBuildCommand_OmitsFlagsWhenUnset(t *testing.T) {
+	c := NewClient(Config{Command: "claude -p", ResumeAcrossTurns: true})
+	got := c.buildCommand(PendingSessionID)
+	if got != "claude -p" {
+		t.Errorf("expected bare command, got %q", got)
+	}
+}
+
 func TestRunTurn_ErrorResult(t *testing.T) {
 	ws := t.TempDir()
 	cmd := `printf '{"type":"result","is_error":true}\n'`

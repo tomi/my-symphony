@@ -18,7 +18,8 @@ func TestExampleWorkflowValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if _, err := config.New(def.Config, filepath.Dir(path)); err != nil {
+	cfg, err := config.New(def.Config, filepath.Dir(path))
+	if err != nil {
 		t.Fatalf("config: %v", err)
 	}
 
@@ -34,5 +35,20 @@ func TestExampleWorkflowValid(t *testing.T) {
 	a := 2
 	if _, err := prompt.Render(def.PromptTemplate, iss, &a); err != nil {
 		t.Fatalf("retry render: %v", err)
+	}
+
+	// The example's "AI Review" state override must resolve and its prompt file
+	// must render under strict mode.
+	if got := cfg.ModelForState("AI Review"); got != "opus" {
+		t.Fatalf("AI Review model = %q, want opus", got)
+	}
+	reviewTmpl := cfg.PromptForState("AI Review", def.PromptTemplate)
+	if reviewTmpl == def.PromptTemplate {
+		t.Fatalf("AI Review prompt should differ from the default body")
+	}
+	rev := iss
+	rev.State = "AI Review"
+	if _, err := prompt.Render(reviewTmpl, rev, nil); err != nil {
+		t.Fatalf("review render: %v", err)
 	}
 }

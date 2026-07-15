@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -123,6 +124,93 @@ func TestClaudeCommandPreserved(t *testing.T) {
 	c, _ := New(map[string]any{"claude": map[string]any{"command": cmd}}, "/tmp")
 	if c.Claude.Command != cmd {
 		t.Errorf("command mangled: %q", c.Claude.Command)
+	}
+}
+
+func TestStateOverrides_ResolveAndFallBack(t *testing.T) {
+	dir := t.TempDir()
+	promptPath := filepath.Join(dir, "review.md")
+	if err := os.WriteFile(promptPath, []byte("  Review prompt body  "), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := New(map[string]any{
+		"agent":  map[string]any{"max_turns": 20},
+		"claude": map[string]any{"model": "sonnet", "reasoning_effort": "medium"},
+		"states": map[string]any{
+			"AI Review": map[string]any{
+				"model":            "opus",
+				"reasoning_effort": "high",
+				"prompt":           "review.md",
+				"max_turns":        5,
+			},
+		},
+	}, dir)
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+
+	// Override state resolves to per-state values.
+	if got := c.ModelForState("AI Review"); got != "opus" {
+		t.Errorf("model = %q, want opus", got)
+	}
+	if got := c.ReasoningEffortForState("AI Review"); got != "high" {
+		t.Errorf("effort = %q, want high", got)
+	}
+	if got := c.MaxTurnsForState("AI Review"); got != 5 {
+		t.Errorf("max turns = %d, want 5", got)
+	}
+	if got := c.PromptForState("AI Review", "DEFAULT"); got != "Review prompt body" {
+		t.Errorf("prompt = %q, want trimmed body", got)
+	}
+
+	// Unlisted state falls back to globals.
+	if got := c.ModelForState("In Progress"); got != "sonnet" {
+		t.Errorf("fallback model = %q, want sonnet", got)
+	}
+	if got := c.ReasoningEffortForState("In Progress"); got != "medium" {
+		t.Errorf("fallback effort = %q, want medium", got)
+	}
+	if got := c.MaxTurnsForState("In Progress"); got != 20 {
+		t.Errorf("fallback max turns = %d, want 20", got)
+	}
+	if got := c.PromptForState("In Progress", "DEFAULT"); got != "DEFAULT" {
+		t.Errorf("fallback prompt = %q, want DEFAULT", got)
+	}
+}
+
+func TestStateOverrides_KeyNormalized(t *testing.T) {
+	c, err := New(map[string]any{
+		"states": map[string]any{"AI Review": map[string]any{"model": "opus"}},
+	}, t.TempDir())
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	// Lookup is case/space-insensitive.
+	if got := c.ModelForState("  ai review  "); got != "opus" {
+		t.Errorf("normalized lookup = %q, want opus", got)
+	}
+}
+
+func TestStateOverrides_MissingPromptFileFails(t *testing.T) {
+	_, err := New(map[string]any{
+		"states": map[string]any{"AI Review": map[string]any{"prompt": "does-not-exist.md"}},
+	}, t.TempDir())
+	var e *Error
+	if err == nil || !asError(err, &e) || e.Code != CodeMissingPromptFile {
+		t.Fatalf("want %s, got %v", CodeMissingPromptFile, err)
+	}
+}
+
+func TestReasoningEffort_InvalidRejected(t *testing.T) {
+	for _, raw := range []map[string]any{
+		{"claude": map[string]any{"reasoning_effort": "extreme"}},
+		{"states": map[string]any{"S": map[string]any{"reasoning_effort": "extreme"}}},
+	} {
+		_, err := New(raw, t.TempDir())
+		var e *Error
+		if err == nil || !asError(err, &e) || e.Code != CodeInvalidConfigValue {
+			t.Fatalf("want %s, got %v", CodeInvalidConfigValue, err)
+		}
 	}
 }
 
