@@ -27,7 +27,7 @@ type Workspace interface {
 type Factories struct {
 	Tracker   func(cfg *config.Config) (tracker.Client, error)
 	Workspace func(cfg *config.Config) Workspace
-	Runner    func(cfg *config.Config, template string, ws Workspace, tr tracker.Client) agent.Runner
+	Runner    func(cfg *config.Config, template string, ws Workspace, tr tracker.Client, issue domain.Issue) agent.Runner
 }
 
 // Orchestrator owns the single event loop and all scheduling state (SPEC §7).
@@ -191,7 +191,7 @@ func (o *Orchestrator) dispatchIssue(issue domain.Issue, attempt *int) {
 		RetryAttempt:  normalizeAttempt(attempt),
 		WorkspacePath: o.ws.PathFor(issue.Identifier),
 	}
-	runner := o.factory.Runner(o.cfg, o.template, o.ws, o.tracker)
+	runner := o.factory.Runner(o.cfg, o.template, o.ws, o.tracker, issue)
 
 	o.state.Running[issue.ID] = entry
 	o.state.Claimed[issue.ID] = struct{}{}

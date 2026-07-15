@@ -1,0 +1,222 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tomi/my-symphony/schema/workflow.schema.json",
+  "title": "Symphony WORKFLOW.md front matter",
+  "description": "Schema for the YAML front matter of a Symphony WORKFLOW.md file (SPEC §5.3). The Markdown body after the front matter is a Liquid prompt template and is not covered by this schema. Unknown keys are permitted and ignored at runtime for forward compatibility (SPEC §5.3), so this schema does not forbid additional properties.",
+  "type": "object",
+  "properties": {
+    "tracker": {
+      "type": "object",
+      "description": "Issue tracker connection and state classification (SPEC §5.3.1).",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["linear"],
+          "description": "Tracker implementation. Required for dispatch; currently only 'linear' is supported."
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "Tracker API endpoint. Defaults to https://api.linear.app/graphql for kind 'linear'."
+        },
+        "api_key": {
+          "type": "string",
+          "description": "Literal token or a $VAR_NAME reference resolved from the environment. An empty resolution is treated as missing (LINEAR_API_KEY is canonical for Linear)."
+        },
+        "project_slug": {
+          "type": "string",
+          "description": "Project identifier. Required for dispatch when kind is 'linear'."
+        },
+        "required_labels": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Every listed label must be present (case/whitespace-insensitive) for an issue to dispatch or continue."
+        },
+        "active_states": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["Todo", "In Progress"],
+          "description": "Tracker states considered actionable."
+        },
+        "terminal_states": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"],
+          "description": "Tracker states that end work on an issue."
+        },
+        "assignee": {
+          "type": "string",
+          "description": "When set, only issues routed to this assignee are dispatched (SPEC §8.2)."
+        }
+      }
+    },
+    "polling": {
+      "type": "object",
+      "description": "Poll scheduling (SPEC §5.3.2).",
+      "properties": {
+        "interval_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 30000,
+          "description": "Milliseconds between poll ticks."
+        }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "description": "Per-issue workspace root (SPEC §5.3.3).",
+      "properties": {
+        "root": {
+          "type": "string",
+          "description": "Workspace root path. '~' and $VAR expand; relative paths resolve against the WORKFLOW.md directory. Defaults to <system-temp>/symphony_workspaces."
+        }
+      }
+    },
+    "hooks": {
+      "type": "object",
+      "description": "Lifecycle shell hooks (SPEC §5.3.4).",
+      "properties": {
+        "after_create": {
+          "type": "string",
+          "description": "Runs once when a workspace is newly created; failure aborts creation."
+        },
+        "before_run": {
+          "type": "string",
+          "description": "Runs before each agent attempt; failure aborts the attempt."
+        },
+        "after_run": {
+          "type": "string",
+          "description": "Runs after each agent attempt; failure is logged and ignored."
+        },
+        "before_remove": {
+          "type": "string",
+          "description": "Runs before workspace deletion; failure is logged and ignored."
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 60000,
+          "description": "Timeout applied to all workspace hooks. Invalid values fail configuration validation."
+        }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "description": "Agent scheduling and turn limits (SPEC §5.3.5).",
+      "properties": {
+        "max_concurrent_agents": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 10,
+          "description": "Global cap on concurrently running agents."
+        },
+        "max_turns": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 20,
+          "description": "Maximum coding-agent turns within one worker session. Invalid values fail configuration validation."
+        },
+        "max_retry_backoff_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 300000,
+          "description": "Ceiling for retry backoff, in milliseconds."
+        },
+        "max_concurrent_agents_by_state": {
+          "type": "object",
+          "description": "Per-state concurrency overrides. Keys are tracker state names (normalized to lowercase for lookup); non-positive or non-numeric values are ignored.",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    "claude": {
+      "type": "object",
+      "description": "Claude Code CLI launch settings (SPEC §5.3.6).",
+      "properties": {
+        "command": {
+          "type": "string",
+          "default": "claude -p --output-format stream-json --verbose",
+          "description": "Shell command launched via `bash -lc` in the workspace. Must emit Claude Code stream-json events on stdout."
+        },
+        "model": {
+          "type": "string",
+          "description": "Global default model, appended as `--model <model>` when non-empty. Overridable per state via `states`."
+        },
+        "reasoning_effort": {
+          "$ref": "#/$defs/reasoningEffort",
+          "description": "Global default effort, appended as `--effort <level>` when non-empty. Overridable per state via `states`."
+        },
+        "resume_across_turns": {
+          "type": "boolean",
+          "default": true,
+          "description": "When true, continuation turns append `--resume <session_id>` once a session id is known."
+        },
+        "turn_timeout_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 3600000,
+          "description": "Per-turn wall-clock timeout, in milliseconds."
+        },
+        "read_timeout_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 5000,
+          "description": "Timeout awaiting the first stream event, in milliseconds."
+        },
+        "stall_timeout_ms": {
+          "type": "integer",
+          "default": 300000,
+          "description": "Inter-event stall timeout, in milliseconds. Values <= 0 disable stall detection."
+        }
+      }
+    },
+    "states": {
+      "type": "object",
+      "description": "Per-tracker-status overrides applied at dispatch (SPEC §5.3.7). Keys are tracker status names (normalized to lowercase for lookup). Unset fields fall back to the corresponding global value.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "Overrides claude.model for issues in this state."
+          },
+          "reasoning_effort": {
+            "$ref": "#/$defs/reasoningEffort",
+            "description": "Overrides claude.reasoning_effort for issues in this state."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Path to a Liquid prompt-template file (same contract as the WORKFLOW.md body). '~' and $VAR expand; relative paths resolve against the WORKFLOW.md directory. A missing/unreadable file fails configuration validation."
+          },
+          "max_turns": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Overrides agent.max_turns for issues in this state. Non-positive/non-numeric values are ignored."
+          }
+        }
+      }
+    },
+    "server": {
+      "type": "object",
+      "description": "Optional HTTP dashboard/API extension (SPEC §13.7). The CLI --port flag overrides server.port.",
+      "properties": {
+        "port": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "TCP port for the HTTP server. Omit to disable unless --port is passed."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "reasoningEffort": {
+      "type": "string",
+      "enum": ["low", "medium", "high", "xhigh", "max"],
+      "description": "Claude Code CLI `--effort` level. Any other value fails configuration validation."
+    }
+  }
+}

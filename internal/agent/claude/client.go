@@ -8,6 +8,7 @@ import (
 	"io"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,9 +26,11 @@ const malformedLineLimit = 10
 // (SPEC §10.2).
 const PendingSessionID = "pending"
 
-// Config holds the claude client settings (SPEC §5.3.6).
+// Config holds the claude client settings (SPEC §5.3.6, §5.3.7).
 type Config struct {
 	Command           string
+	Model             string // appended as --model when non-empty
+	ReasoningEffort   string // appended as --effort when non-empty
 	ResumeAcrossTurns bool
 	TurnTimeoutMs     int
 	ReadTimeoutMs     int
@@ -67,6 +70,30 @@ func (c *Client) StartSession(workspace, identifier, title string) *Session {
 // turn (SPEC §10.3).
 func (c *Client) StopSession(_ *Session) {}
 
+// buildCommand assembles the shell command for a turn: the base command, then
+// per-run --model / --effort flags (SPEC §5.3.7), then --resume once a session id
+// is known (SPEC §5.3.6). Model/effort values are shell-quoted since the command
+// is executed via `bash -lc`.
+func (c *Client) buildCommand(sessionID string) string {
+	command := c.cfg.Command
+	if c.cfg.Model != "" {
+		command += " --model " + shellSingleQuote(c.cfg.Model)
+	}
+	if c.cfg.ReasoningEffort != "" {
+		command += " --effort " + shellSingleQuote(c.cfg.ReasoningEffort)
+	}
+	if c.cfg.ResumeAcrossTurns && sessionID != "" && sessionID != PendingSessionID {
+		command += " --resume " + sessionID
+	}
+	return command
+}
+
+// shellSingleQuote wraps a value in single quotes for safe interpolation into a
+// `bash -lc` command string.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 // TurnResult reports per-turn usage for accumulation (SPEC §13.5).
 type TurnResult struct {
 	Usage *agent.Usage
@@ -78,10 +105,7 @@ func (c *Client) RunTurn(ctx context.Context, s *Session, prompt string, emit fu
 	s.turn++
 	turnID := strconv.Itoa(s.turn)
 
-	command := c.cfg.Command
-	if c.cfg.ResumeAcrossTurns && s.SessionID != "" && s.SessionID != PendingSessionID {
-		command = command + " --resume " + s.SessionID
-	}
+	command := c.buildCommand(s.SessionID)
 
 	turnTimeout := time.Duration(c.cfg.TurnTimeoutMs) * time.Millisecond
 	var turnCtx context.Context

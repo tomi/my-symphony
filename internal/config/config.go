@@ -16,6 +16,7 @@ const (
 	CodeMissingTrackerProjectSlug = "missing_tracker_project_slug"
 	CodeMissingClaudeCommand      = "missing_claude_command"
 	CodeInvalidConfigValue        = "invalid_config_value"
+	CodeMissingPromptFile         = "missing_prompt_file"
 )
 
 // Error is a typed config error carrying a spec code.
@@ -77,10 +78,22 @@ type AgentConfig struct {
 // ClaudeConfig mirrors the `claude` object (SPEC §5.3.6).
 type ClaudeConfig struct {
 	Command           string
+	Model             string // global default model; empty means the CLI default
+	ReasoningEffort   string // global default effort; empty means the CLI default
 	ResumeAcrossTurns bool
 	TurnTimeoutMs     int
 	ReadTimeoutMs     int
 	StallTimeoutMs    int
+}
+
+// StateOverride mirrors one entry of the `states` map: per-status agent
+// overrides applied when an issue in that tracker state is dispatched
+// (SPEC §5.3.7). Empty/zero fields fall back to the global values.
+type StateOverride struct {
+	Model           string
+	ReasoningEffort string
+	PromptTemplate  string // resolved template body; empty means use the default
+	MaxTurns        int    // 0 means fall back to agent.max_turns
 }
 
 // ServerConfig mirrors the extension `server` object (SPEC §13.7).
@@ -98,6 +111,10 @@ type Config struct {
 	Agent     AgentConfig
 	Claude    ClaudeConfig
 	Server    ServerConfig
+
+	// States holds per-tracker-status overrides, keyed by normalized (lowercase)
+	// state name (SPEC §5.3.7, §8.3).
+	States map[string]StateOverride
 
 	// workflowDir is the directory containing WORKFLOW.md, used to resolve a
 	// relative workspace.root (SPEC §6.1).
@@ -157,10 +174,21 @@ func New(raw map[string]any, workflowDir string) (*Config, error) {
 
 	claude := subMap(raw, "claude")
 	c.Claude.Command = firstNonEmpty(asString(claude["command"]), defaultClaudeCommand)
+	c.Claude.Model = strings.TrimSpace(asString(claude["model"]))
+	c.Claude.ReasoningEffort = strings.TrimSpace(asString(claude["reasoning_effort"]))
+	if err := validateEffort(c.Claude.ReasoningEffort); err != nil {
+		return nil, err
+	}
 	c.Claude.ResumeAcrossTurns = asBoolDefault(claude["resume_across_turns"], true)
 	c.Claude.TurnTimeoutMs = asIntDefault(claude["turn_timeout_ms"], 3600000)
 	c.Claude.ReadTimeoutMs = asIntDefault(claude["read_timeout_ms"], 5000)
 	c.Claude.StallTimeoutMs = asIntDefault(claude["stall_timeout_ms"], 300000)
+
+	states, err := c.parseStateOverrides(raw["states"])
+	if err != nil {
+		return nil, err
+	}
+	c.States = states
 
 	server := subMap(raw, "server")
 	if v, present := server["port"]; present {
@@ -218,8 +246,118 @@ func (c *Config) ValidateDispatch() error {
 // PerStateLimit returns the concurrency limit for a tracker state, falling back
 // to the global limit when no override is present (SPEC §8.3).
 func (c *Config) PerStateLimit(state string) int {
-	if v, ok := c.Agent.MaxConcurrentByState[strings.ToLower(strings.TrimSpace(state))]; ok {
+	if v, ok := c.Agent.MaxConcurrentByState[normState(state)]; ok {
 		return v
 	}
 	return c.Agent.MaxConcurrent
+}
+
+// ModelForState returns the model for a tracker state: the per-state override if
+// set, else the global claude.model (SPEC §5.3.7, §8.3).
+func (c *Config) ModelForState(state string) string {
+	if ov, ok := c.States[normState(state)]; ok && ov.Model != "" {
+		return ov.Model
+	}
+	return c.Claude.Model
+}
+
+// ReasoningEffortForState returns the effort level for a tracker state: the
+// per-state override if set, else the global claude.reasoning_effort.
+func (c *Config) ReasoningEffortForState(state string) string {
+	if ov, ok := c.States[normState(state)]; ok && ov.ReasoningEffort != "" {
+		return ov.ReasoningEffort
+	}
+	return c.Claude.ReasoningEffort
+}
+
+// MaxTurnsForState returns the turn budget for a tracker state: the per-state
+// override if set, else the global agent.max_turns.
+func (c *Config) MaxTurnsForState(state string) int {
+	if ov, ok := c.States[normState(state)]; ok && ov.MaxTurns > 0 {
+		return ov.MaxTurns
+	}
+	return c.Agent.MaxTurns
+}
+
+// PromptForState returns the prompt template body for a tracker state: the
+// per-state override body if set, else the provided default (the WORKFLOW.md body).
+func (c *Config) PromptForState(state, def string) string {
+	if ov, ok := c.States[normState(state)]; ok && ov.PromptTemplate != "" {
+		return ov.PromptTemplate
+	}
+	return def
+}
+
+// normState normalizes a tracker state name for map lookups (SPEC §8.3).
+func normState(state string) string {
+	return strings.ToLower(strings.TrimSpace(state))
+}
+
+// validEffortLevels are the effort levels accepted by the Claude Code CLI
+// `--effort` flag (SPEC §5.3.7).
+var validEffortLevels = map[string]bool{
+	"low": true, "medium": true, "high": true, "xhigh": true, "max": true,
+}
+
+// validateEffort rejects a non-empty effort value outside the CLI's accepted set.
+func validateEffort(e string) error {
+	if e == "" || validEffortLevels[strings.ToLower(e)] {
+		return nil
+	}
+	return &Error{Code: CodeInvalidConfigValue,
+		Msg: "reasoning_effort must be one of low, medium, high, xhigh, max"}
+}
+
+// parseStateOverrides builds the per-status override map from the raw `states`
+// front-matter object. Keys are normalized (lowercase); non-map entries are
+// ignored. A referenced prompt file that cannot be read is a fatal config error
+// (SPEC §5.3.7, §6.1).
+func (c *Config) parseStateOverrides(v any) (map[string]StateOverride, error) {
+	out := map[string]StateOverride{}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return out, nil
+	}
+	for k, val := range m {
+		sm, ok := val.(map[string]any)
+		if !ok {
+			continue
+		}
+		var ov StateOverride
+		ov.Model = strings.TrimSpace(asString(sm["model"]))
+		ov.ReasoningEffort = strings.TrimSpace(asString(sm["reasoning_effort"]))
+		if err := validateEffort(ov.ReasoningEffort); err != nil {
+			return nil, err
+		}
+		if mt, ok := asIntStrict(sm["max_turns"], 0); ok && mt > 0 {
+			ov.MaxTurns = mt
+		}
+		if p := strings.TrimSpace(asString(sm["prompt"])); p != "" {
+			body, err := c.readPromptFile(p)
+			if err != nil {
+				return nil, err
+			}
+			ov.PromptTemplate = body
+		}
+		out[normState(k)] = ov
+	}
+	return out, nil
+}
+
+// readPromptFile resolves a prompt path (with ~/$VAR expansion, relative to the
+// workflow directory) and reads its body (SPEC §5.3.7, §6.1).
+func (c *Config) readPromptFile(p string) (string, error) {
+	path := expandPath(p)
+	if !filepath.IsAbs(path) {
+		base := c.workflowDir
+		if base == "" {
+			base, _ = os.Getwd()
+		}
+		path = filepath.Join(base, path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", &Error{Code: CodeMissingPromptFile, Msg: p, Wrapped: err}
+	}
+	return strings.TrimSpace(string(data)), nil
 }

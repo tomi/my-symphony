@@ -329,6 +329,12 @@ Returned workflow object:
 
 ### 5.3 Front Matter Schema
 
+A machine-readable JSON Schema (Draft 2020-12) for the front matter is maintained at
+[`schema/workflow.schema.json`](schema/workflow.schema.json); see
+[`schema/README.md`](schema/README.md) for editor and programmatic use. It mirrors the
+prose contract below and is the recommended source for editor autocompletion and
+validation.
+
 Top-level keys:
 
 - `tracker`
@@ -448,6 +454,16 @@ the assembled command locally if they want stricter startup checks.
   - The runtime launches this command via `bash -lc` in the workspace directory.
   - The rendered prompt is delivered on the process `stdin`.
   - The launched process MUST emit Claude Code `stream-json` events on stdout.
+- `model` (string)
+  - Default: empty (the CLI's own default model).
+  - When non-empty, the runtime appends `--model <model>` to the launched command.
+  - Serves as the global default overridable per state (see §5.3.7).
+- `reasoning_effort` (string)
+  - Default: empty (the CLI's own default effort).
+  - Accepted values: `low`, `medium`, `high`, `xhigh`, `max`. Any other value fails
+    configuration validation (`invalid_config_value`).
+  - When non-empty, the runtime appends `--effort <level>` to the launched command.
+  - Serves as the global default overridable per state (see §5.3.7).
 - `resume_across_turns` (boolean)
   - Default: `true`
   - When `true`, continuation turns re-attach to the same session by appending
@@ -459,6 +475,35 @@ the assembled command locally if they want stricter startup checks.
 - `stall_timeout_ms` (integer)
   - Default: `300000` (5 minutes)
   - If `<= 0`, stall detection is disabled.
+
+#### 5.3.7 `states` (object)
+
+Per-tracker-status overrides applied when an issue is dispatched, keyed by tracker
+status name. This lets a status such as `AI Review` run with a different model,
+reasoning effort, instructions, and turn budget than the default implementation
+status. Unset fields fall back to the corresponding global value.
+
+- Keys are normalized (`lowercase`) for lookup, matching the state a candidate issue
+  is in at dispatch time.
+- Entries whose value is not an object are ignored.
+
+Each entry is an object with optional fields:
+
+- `model` (string) — overrides `claude.model` for issues in this state.
+- `reasoning_effort` (string) — overrides `claude.reasoning_effort`; same accepted
+  values (`low`/`medium`/`high`/`xhigh`/`max`).
+- `prompt` (string path) — path to a prompt-template file (Liquid, same contract as
+  §5.4). Relative paths resolve against the WORKFLOW.md directory; `~` and `$VAR`
+  expand. A missing or unreadable file fails configuration validation
+  (`missing_prompt_file`). When set, this template replaces the WORKFLOW.md body for
+  issues in this state; otherwise the WORKFLOW.md body is used.
+- `max_turns` (positive integer) — overrides `agent.max_turns` for this state.
+  Non-positive or non-numeric values are ignored (global default applies).
+
+The override is resolved from the issue's state at dispatch (§16.4). The prompt
+template is selected once per worker attempt; continuation turns keep their fixed
+guidance (§10.2). Changes SHOULD be re-applied at runtime for subsequent dispatches
+(§6.2).
 
 ### 5.4 Prompt Template Contract
 
@@ -595,10 +640,13 @@ not require recognizing or validating extension fields unless that extension is 
 - `agent.max_retry_backoff_ms`: integer, default `300000` (5m)
 - `agent.max_concurrent_agents_by_state`: map of positive integers, default `{}`
 - `claude.command`: shell command string, default `claude -p --output-format stream-json --verbose`
+- `claude.model`: string, default empty (CLI default)
+- `claude.reasoning_effort`: string (`low`/`medium`/`high`/`xhigh`/`max`), default empty
 - `claude.resume_across_turns`: boolean, default `true`
 - `claude.turn_timeout_ms`: integer, default `3600000`
 - `claude.read_timeout_ms`: integer, default `5000`
 - `claude.stall_timeout_ms`: integer, default `300000`
+- `states`: map of per-status overrides (`model`, `reasoning_effort`, `prompt`, `max_turns`), default `{}`
 
 ## 7. Orchestration State Machine
 

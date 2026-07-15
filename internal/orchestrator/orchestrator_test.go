@@ -90,7 +90,7 @@ func newTestOrch(t *testing.T, cfg *config.Config, ft *fakeTracker, fw *fakeWork
 	factory := Factories{
 		Tracker:   func(*config.Config) (tracker.Client, error) { return ft, nil },
 		Workspace: func(*config.Config) Workspace { return fw },
-		Runner: func(*config.Config, string, Workspace, tracker.Client) agent.Runner {
+		Runner: func(*config.Config, string, Workspace, tracker.Client, domain.Issue) agent.Runner {
 			return blockingRunner{}
 		},
 	}
