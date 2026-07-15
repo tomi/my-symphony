@@ -109,6 +109,30 @@ func TestRunner_ContinuesUpToMaxTurns(t *testing.T) {
 	}
 }
 
+func TestRunner_StopsWhenIssueMovesToAnotherActiveState(t *testing.T) {
+	ws := &fakeWS{}
+	be := &fakeBackend{}
+	// Dispatched in "In Progress"; the agent moves it to "AI Review" (also
+	// active). The worker must stop so a fresh dispatch loads the review prompt,
+	// rather than looping generic continuation turns against this session.
+	tr := &fakeRefresher{states: []string{"AI Review", "AI Review"}}
+	r := NewRunner(RunnerConfig{
+		Workspace: ws, Backend: be, Tracker: tr, Template: "Task {{ issue.identifier }}",
+		ActiveStates: []string{"Todo", "In Progress", "AI Review"}, MaxTurns: 5,
+	})
+
+	err := r.Run(context.Background(), domain.Issue{ID: "i1", Identifier: "AB-1", Title: "t", State: "In Progress"}, nil, func(Event) {})
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if len(be.prompts) != 1 {
+		t.Fatalf("expected 1 turn before the state change ends the worker, got %d", len(be.prompts))
+	}
+	if be.stopped != 1 {
+		t.Errorf("session should be stopped")
+	}
+}
+
 func TestRunner_BeforeRunFailureAborts(t *testing.T) {
 	ws := &fakeWS{beforeRunErr: errors.New("hook boom")}
 	be := &fakeBackend{}
