@@ -42,6 +42,7 @@ var dashboardTmpl = template.Must(template.New("dashboard").Funcs(template.FuncM
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="5">
 <title>Symphony Dashboard</title>
 <style>
  body { font-family: system-ui, sans-serif; margin: 2rem; color: #1a1a1a; }
@@ -53,6 +54,12 @@ var dashboardTmpl = template.Must(template.New("dashboard").Funcs(template.FuncM
  .card { background: #f8f8f8; border: 1px solid #e0e0e0; border-radius: 8px; padding: 1rem 1.5rem; }
  .card .n { font-size: 1.6rem; font-weight: 600; }
  .muted { color: #777; }
+ .feed { margin-bottom: 2rem; }
+ .feed h3 { font-size: 1rem; margin: 1rem 0 0.5rem; }
+ .feed ul { list-style: none; padding: 0; margin: 0; }
+ .feed li { padding: 6px 10px; border-left: 3px solid #ddd; margin-bottom: 4px; background: #fafafa; font-size: 0.9rem; }
+ .feed li .ts { color: #777; font-size: 0.8rem; margin-right: 0.5rem; }
+ .feed .msg { white-space: pre-wrap; word-break: break-word; }
 </style>
 </head>
 <body>
@@ -83,6 +90,23 @@ var dashboardTmpl = template.Must(template.New("dashboard").Funcs(template.FuncM
  <tr><td colspan="7" class="muted">no running sessions</td></tr>
  {{ end }}
 </table>
+
+<h2>Recent output</h2>
+<div class="feed">
+ {{ $shown := false }}
+ {{ range .Running }}
+  {{ if .Activity }}
+  {{ $shown = true }}
+  <h3>{{ .IssueIdentifier }} <span class="muted">turn {{ .TurnCount }}</span></h3>
+  <ul>
+   {{ range .Activity }}
+   <li><span class="ts">{{ fmtTime .Timestamp }}</span><span class="msg">{{ .Message }}</span></li>
+   {{ end }}
+  </ul>
+  {{ end }}
+ {{ end }}
+ {{ if not $shown }}<p class="muted">no agent output yet</p>{{ end }}
+</div>
 
 <h2>Retry queue</h2>
 <table>

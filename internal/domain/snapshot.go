@@ -40,6 +40,9 @@ type RunningRow struct {
 	StartedAt       time.Time   `json:"started_at"`
 	LastEventAt     *time.Time  `json:"last_event_at"`
 	Tokens          TokenCounts `json:"tokens"`
+	// Activity is a bounded, newest-last history of recent agent messages for the
+	// observability surfaces.
+	Activity []AgentActivity `json:"activity"`
 	// WorkspacePath is included for the per-issue detail endpoint.
 	WorkspacePath string `json:"-"`
 	RetryAttempt  int    `json:"-"`

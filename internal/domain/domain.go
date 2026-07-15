@@ -41,6 +41,16 @@ type Workspace struct {
 	CreatedNow bool
 }
 
+// AgentActivity is a single retained agent event kept for observability. A
+// bounded, rolling history of these is surfaced on the dashboard so the agent's
+// output can be watched live (SPEC §13.7).
+type AgentActivity struct {
+	Timestamp time.Time `json:"timestamp"`
+	Event     string    `json:"event"`
+	TurnID    string    `json:"turn_id"`
+	Message   string    `json:"message"`
+}
+
 // LiveSession captures agent session metadata tracked while a subprocess runs
 // (SPEC §4.1.6).
 type LiveSession struct {
@@ -58,6 +68,9 @@ type LiveSession struct {
 	LastReportedOutputTokens int
 	LastReportedTotalTokens  int
 	TurnCount                int
+	// RecentActivity is a bounded, newest-last history of agent messages retained
+	// for the observability surfaces. Ephemeral: lives only while the session runs.
+	RecentActivity []AgentActivity
 }
 
 // RetryEntry is scheduled retry state for an issue (SPEC §4.1.7).

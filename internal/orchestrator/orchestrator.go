@@ -225,6 +225,12 @@ func (o *Orchestrator) onAgentUpdate(ev AgentUpdate) {
 	e.Session.LastAgentEvent = &event
 	if m.Message != "" {
 		e.Session.LastAgentMessage = logging.Truncate(m.Message)
+		e.Session.RecentActivity = appendActivity(e.Session.RecentActivity, domain.AgentActivity{
+			Timestamp: ts,
+			Event:     event,
+			TurnID:    m.TurnID,
+			Message:   m.Message,
+		})
 	}
 	if m.SessionID != "" && m.SessionID != "pending" {
 		e.Session.SessionID = m.SessionID
@@ -255,6 +261,20 @@ func (o *Orchestrator) onAgentUpdate(ev AgentUpdate) {
 	if m.RateLimits != nil {
 		o.state.ClaudeRateLimits = m.RateLimits
 	}
+}
+
+// maxRecentActivity bounds the per-session rolling agent-message history retained
+// for observability. Oldest entries are dropped once the cap is reached.
+const maxRecentActivity = 50
+
+// appendActivity appends act to hist, keeping only the newest maxRecentActivity
+// entries (oldest dropped). Ordering is newest-last.
+func appendActivity(hist []domain.AgentActivity, act domain.AgentActivity) []domain.AgentActivity {
+	hist = append(hist, act)
+	if len(hist) > maxRecentActivity {
+		hist = hist[len(hist)-maxRecentActivity:]
+	}
+	return hist
 }
 
 // onWorkerExit removes the running entry and schedules the appropriate retry
