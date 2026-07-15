@@ -329,6 +329,12 @@ Returned workflow object:
 
 ### 5.3 Front Matter Schema
 
+A machine-readable JSON Schema (Draft 2020-12) for the front matter is maintained at
+[`schema/workflow.schema.json`](schema/workflow.schema.json); see
+[`schema/README.md`](schema/README.md) for editor and programmatic use. It mirrors the
+prose contract below and is the recommended source for editor autocompletion and
+validation.
+
 Top-level keys:
 
 - `tracker`

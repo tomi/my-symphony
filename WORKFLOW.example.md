@@ -1,4 +1,5 @@
 ---
+# yaml-language-server: $schema=schema/workflow.schema.json
 # Symphony workflow contract (see SPEC.md §5). Copy to WORKFLOW.md and edit.
 tracker:
   kind: linear
