@@ -8,6 +8,12 @@ import (
 	"github.com/tomi/my-symphony/internal/agent"
 )
 
+// maxSummaryLen bounds the assistant text carried on an agent event. It is set
+// generously so observability surfaces (the dashboard activity feed) show
+// readable messages rather than one-line fragments; the orchestrator applies its
+// own tighter truncation for the compact "last message" field.
+const maxSummaryLen = 2000
+
 // streamEvent is a loosely-typed stream-json event. The Claude Code CLI is the
 // source of truth for the exact shapes; we read leniently (SPEC §10.3).
 type streamEvent struct {
@@ -158,8 +164,8 @@ func summarizeMessage(raw json.RawMessage) string {
 			}
 		}
 		s := strings.TrimSpace(strings.Join(parts, " "))
-		if len(s) > 200 {
-			s = s[:200]
+		if len(s) > maxSummaryLen {
+			s = s[:maxSummaryLen]
 		}
 		return s
 	}

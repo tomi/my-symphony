@@ -45,6 +45,10 @@ func (o *Orchestrator) buildSnapshot() domain.Snapshot {
 			t := *e.Session.LastAgentTimestamp
 			row.LastEventAt = &t
 		}
+		if len(e.Session.RecentActivity) > 0 {
+			// Copy into a fresh slice so observers never share the live backing array.
+			row.Activity = append([]domain.AgentActivity(nil), e.Session.RecentActivity...)
+		}
 		snap.Running = append(snap.Running, row)
 	}
 	snap.ClaudeTotals.SecondsRunning = live

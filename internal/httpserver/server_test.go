@@ -34,6 +34,10 @@ func sampleSnap() domain.Snapshot {
 			IssueID: "i1", IssueIdentifier: "AB-1", State: "In Progress",
 			SessionID: "s1", TurnCount: 2, WorkspacePath: "/ws/AB-1",
 			Tokens: domain.TokenCounts{InputTokens: 5, OutputTokens: 3, TotalTokens: 8},
+			Activity: []domain.AgentActivity{{
+				Timestamp: now, Event: "turn_completed", TurnID: "1",
+				Message: "investigating the failing test",
+			}},
 		}},
 		Retrying: []domain.RetryRow{{
 			IssueID: "i2", IssueIdentifier: "AB-2", Attempt: 1, DueAt: now,
@@ -73,6 +77,14 @@ func TestIssueDetail_FoundAndNotFound(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &body)
 	if body["status"] != "running" {
 		t.Errorf("status = %v", body["status"])
+	}
+	running := body["running"].(map[string]any)
+	activity := running["activity"].([]any)
+	if len(activity) != 1 {
+		t.Fatalf("detail activity len = %d, want 1", len(activity))
+	}
+	if msg := activity[0].(map[string]any)["message"]; msg != "investigating the failing test" {
+		t.Errorf("detail activity message = %v", msg)
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/UNKNOWN", nil)
@@ -136,6 +148,12 @@ func TestDashboardRenders(t *testing.T) {
 	}
 	if !contains(w.Body.String(), "AB-1") {
 		t.Errorf("dashboard should list running issue")
+	}
+	if !contains(w.Body.String(), "investigating the failing test") {
+		t.Errorf("dashboard should render agent output in the recent-output feed")
+	}
+	if !contains(w.Body.String(), `http-equiv="refresh"`) {
+		t.Errorf("dashboard should auto-refresh")
 	}
 }
 

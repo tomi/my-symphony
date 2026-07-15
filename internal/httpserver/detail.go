@@ -18,6 +18,7 @@ func buildIssueDetail(snap domain.Snapshot, identifier string) (map[string]any, 
 			"started_at":   row.StartedAt,
 			"last_event":   row.LastEvent,
 			"last_message": row.LastMessage,
+			"activity":     activityList(row.Activity),
 			"tokens": map[string]any{
 				"input_tokens":  row.Tokens.InputTokens,
 				"output_tokens": row.Tokens.OutputTokens,
@@ -65,4 +66,20 @@ func buildIssueDetail(snap domain.Snapshot, identifier string) (map[string]any, 
 	}
 
 	return nil, false
+}
+
+// activityList projects retained agent activity into a JSON-friendly slice for
+// the detail endpoint. Returns an empty (non-nil) slice so the field serializes
+// as [] rather than null.
+func activityList(activity []domain.AgentActivity) []map[string]any {
+	out := make([]map[string]any, 0, len(activity))
+	for _, a := range activity {
+		out = append(out, map[string]any{
+			"timestamp": a.Timestamp,
+			"event":     a.Event,
+			"turn_id":   a.TurnID,
+			"message":   a.Message,
+		})
+	}
+	return out
 }

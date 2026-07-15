@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -410,6 +411,61 @@ func TestTokenAggregationAcrossUpdates(t *testing.T) {
 	}
 	if o.state.Running["i1"].Session.ClaudeTotalTokens != 45 {
 		t.Errorf("per-session total = %d, want 45", o.state.Running["i1"].Session.ClaudeTotalTokens)
+	}
+}
+
+func TestRecentActivityCaptureAndCap(t *testing.T) {
+	cfg := testConfig(t, nil)
+	o := newTestOrch(t, cfg, &fakeTracker{}, &fakeWorkspace{})
+	o.rootCtx = context.Background()
+	o.state.Running["i1"] = &RunningEntry{Identifier: "AB-1", Issue: iss("i1", "AB-1", "In Progress", nil), Cancel: func() {}, StartedAt: time.Now()}
+
+	// Events without a message add nothing to the activity feed.
+	o.onAgentUpdate(AgentUpdate{IssueID: "i1", Msg: agent.Event{Event: agent.EventSessionStarted, Timestamp: time.Now()}})
+	if got := len(o.state.Running["i1"].Session.RecentActivity); got != 0 {
+		t.Fatalf("empty-message event should not append activity, got %d", got)
+	}
+
+	// Push more than the cap; oldest should be dropped, newest retained.
+	total := maxRecentActivity + 10
+	for i := 0; i < total; i++ {
+		o.onAgentUpdate(AgentUpdate{IssueID: "i1", Msg: agent.Event{
+			Event: agent.EventTurnCompleted, Timestamp: time.Now(), TurnID: strconv.Itoa(i),
+			Message: "msg-" + strconv.Itoa(i),
+		}})
+	}
+	act := o.state.Running["i1"].Session.RecentActivity
+	if len(act) != maxRecentActivity {
+		t.Fatalf("activity len = %d, want cap %d", len(act), maxRecentActivity)
+	}
+	// Newest-last ordering: last entry is the final message pushed.
+	if want := "msg-" + strconv.Itoa(total-1); act[len(act)-1].Message != want {
+		t.Errorf("last activity message = %q, want %q", act[len(act)-1].Message, want)
+	}
+	// Oldest surviving entry is total-cap (earlier ones dropped).
+	if want := "msg-" + strconv.Itoa(total-maxRecentActivity); act[0].Message != want {
+		t.Errorf("first activity message = %q, want %q", act[0].Message, want)
+	}
+}
+
+func TestSnapshotActivityIsIndependentCopy(t *testing.T) {
+	cfg := testConfig(t, nil)
+	o := newTestOrch(t, cfg, &fakeTracker{}, &fakeWorkspace{})
+	o.rootCtx = context.Background()
+	o.state.Running["i1"] = &RunningEntry{Identifier: "AB-1", Issue: iss("i1", "AB-1", "In Progress", nil), Cancel: func() {}, StartedAt: time.Now()}
+	o.onAgentUpdate(AgentUpdate{IssueID: "i1", Msg: agent.Event{
+		Event: agent.EventTurnCompleted, Timestamp: time.Now(), Message: "hello",
+	}})
+
+	snap := o.buildSnapshot()
+	if len(snap.Running) != 1 || len(snap.Running[0].Activity) != 1 || snap.Running[0].Activity[0].Message != "hello" {
+		t.Fatalf("snapshot activity = %+v", snap.Running)
+	}
+
+	// Mutating the snapshot copy must not touch live orchestrator state.
+	snap.Running[0].Activity[0].Message = "mutated"
+	if live := o.state.Running["i1"].Session.RecentActivity[0].Message; live != "hello" {
+		t.Errorf("live activity was mutated via snapshot: %q", live)
 	}
 }
 
