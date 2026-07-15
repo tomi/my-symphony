@@ -100,6 +100,12 @@ func (r *DefaultRunner) Run(ctx context.Context, issue domain.Issue, attempt *in
 
 	session := r.backend.StartSession(ws.Path, issue.Identifier, issue.Title)
 
+	// The per-state prompt/effort/turns are bound to the state this worker was
+	// dispatched for. Continuation turns reuse that binding, so once the issue
+	// moves to a *different* active state we must stop and let the orchestrator
+	// re-dispatch a fresh worker with that state's prompt (SPEC §5.3.7, §16.5).
+	dispatchState := domain.NormalizeState(issue.State)
+
 	turn := 1
 	for {
 		p, err := r.buildTurnPrompt(issue, attempt, turn)
@@ -127,6 +133,11 @@ func (r *DefaultRunner) Run(ctx context.Context, issue domain.Issue, attempt *in
 		}
 
 		if !r.isActive(issue.State) {
+			break
+		}
+		// A transition to another active state needs a different prompt than the
+		// one bound to this worker; exit so a fresh dispatch picks it up.
+		if domain.NormalizeState(issue.State) != dispatchState {
 			break
 		}
 		if turn >= r.maxTurns {
