@@ -1,8 +1,13 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -125,6 +130,48 @@ func TestSortForDispatch(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("order = %v, want %v", got, want)
 		}
+	}
+}
+
+func TestLogRoutingSummary_SurfacesPromptMode(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "review.md"), []byte("Review body"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.New(map[string]any{
+		"tracker": map[string]any{
+			"kind": "linear", "api_key": "k", "project_slug": "p",
+			"active_states": []any{"In Progress", "AI Review"},
+		},
+		"states": map[string]any{
+			"AI Review": map[string]any{"model": "opus", "prompt": "review.md", "max_turns": 5},
+		},
+	}, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	logger := logging.NewWithSinks(slog.New(slog.NewTextHandler(&buf, nil)))
+	factory := Factories{
+		Tracker:   func(*config.Config) (tracker.Client, error) { return &fakeTracker{}, nil },
+		Workspace: func(*config.Config) Workspace { return &fakeWorkspace{} },
+		Runner: func(*config.Config, string, Workspace, tracker.Client, domain.Issue) agent.Runner {
+			return blockingRunner{}
+		},
+	}
+	o, err := New(cfg, "template", factory, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	o.logRoutingSummary()
+	out := buf.String()
+	if !strings.Contains(out, `state="AI Review"`) || !strings.Contains(out, "prompt_mode=override") {
+		t.Errorf("review state should log prompt_mode=override; got:\n%s", out)
+	}
+	if !strings.Contains(out, `state="In Progress"`) || !strings.Contains(out, "prompt_mode=default") {
+		t.Errorf("implementation state should log prompt_mode=default; got:\n%s", out)
 	}
 }
 

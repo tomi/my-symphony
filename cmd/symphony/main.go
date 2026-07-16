@@ -150,13 +150,14 @@ func buildFactories(logger *logging.Logger) orchestrator.Factories {
 				ReadTimeoutMs:     cfg.Claude.ReadTimeoutMs,
 			})
 			return agent.NewRunner(agent.RunnerConfig{
-				Workspace:    wm,
-				Backend:      claude.NewBackend(client),
-				Tracker:      tr,
-				Template:     cfg.PromptForState(state, template),
-				ActiveStates: cfg.Tracker.ActiveStates,
-				MaxTurns:     cfg.MaxTurnsForState(state),
-				Logger:       logger,
+				Workspace:      wm,
+				Backend:        claude.NewBackend(client),
+				Tracker:        tr,
+				Template:       cfg.PromptForState(state, template),
+				PromptOverride: cfg.HasPromptOverride(state),
+				ActiveStates:   cfg.Tracker.ActiveStates,
+				MaxTurns:       cfg.MaxTurnsForState(state),
+				Logger:         logger,
 			})
 		},
 	}

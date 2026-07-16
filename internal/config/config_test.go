@@ -178,6 +178,38 @@ func TestStateOverrides_ResolveAndFallBack(t *testing.T) {
 	}
 }
 
+func TestHasPromptOverride(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "review.md"), []byte("Review body"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := New(map[string]any{
+		"states": map[string]any{
+			// Custom prompt -> override mode.
+			"AI Review": map[string]any{"prompt": "review.md"},
+			// Model-only override, no prompt -> still the default body.
+			"In Progress": map[string]any{"model": "opus"},
+		},
+	}, dir)
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+
+	if !c.HasPromptOverride("AI Review") {
+		t.Error("AI Review should report a prompt override")
+	}
+	// Case/space-insensitive, matching PromptForState normalization.
+	if !c.HasPromptOverride("  ai review  ") {
+		t.Error("lookup should be normalized")
+	}
+	if c.HasPromptOverride("In Progress") {
+		t.Error("a model-only override must not count as a prompt override")
+	}
+	if c.HasPromptOverride("Todo") {
+		t.Error("an unlisted state has no prompt override")
+	}
+}
+
 func TestStateOverrides_KeyNormalized(t *testing.T) {
 	c, err := New(map[string]any{
 		"states": map[string]any{"AI Review": map[string]any{"model": "opus"}},

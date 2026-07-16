@@ -84,6 +84,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		return err
 	}
 
+	o.logRoutingSummary()
 	o.startupTerminalCleanup()
 	o.scheduleTick(0)
 
@@ -209,7 +210,36 @@ func (o *Orchestrator) dispatchIssue(issue domain.Issue, attempt *int) {
 	}()
 
 	o.logger.Info("dispatch", "issue_id", issue.ID, "issue_identifier", issue.Identifier,
-		"outcome", "dispatched", "attempt", normalizeAttempt(attempt))
+		"outcome", "dispatched", "attempt", normalizeAttempt(attempt),
+		"state", issue.State, "prompt_mode", promptMode(o.cfg, issue.State),
+		"model", o.cfg.ModelForState(issue.State),
+		"reasoning_effort", o.cfg.ReasoningEffortForState(issue.State),
+		"max_turns", o.cfg.MaxTurnsForState(issue.State))
+}
+
+// promptMode reports whether a dispatched state runs its own prompt override
+// ("override", e.g. review) or the default WORKFLOW.md body ("default", i.e.
+// implementation). Surfacing this makes a mis-keyed or missing per-state prompt
+// visible instead of silently degrading to the default (SPEC §5.3.7).
+func promptMode(cfg *config.Config, state string) string {
+	if cfg.HasPromptOverride(state) {
+		return "override"
+	}
+	return "default"
+}
+
+// logRoutingSummary logs one line per active tracker state showing the resolved
+// per-state routing (prompt mode, model, effort, turns). A review column whose
+// name does not match its `states` key surfaces here as prompt_mode=default at
+// startup rather than being discovered only after a mis-routed session (SPEC §5.3.7).
+func (o *Orchestrator) logRoutingSummary() {
+	for _, state := range o.cfg.Tracker.ActiveStates {
+		o.logger.Info("state routing", "state", state,
+			"prompt_mode", promptMode(o.cfg, state),
+			"model", o.cfg.ModelForState(state),
+			"reasoning_effort", o.cfg.ReasoningEffortForState(state),
+			"max_turns", o.cfg.MaxTurnsForState(state))
+	}
 }
 
 // onAgentUpdate updates live session fields, tokens, and rate limits (SPEC §7.3, §13.5).
