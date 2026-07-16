@@ -49,6 +49,14 @@ type AgentActivity struct {
 	Event     string    `json:"event"`
 	TurnID    string    `json:"turn_id"`
 	Message   string    `json:"message"`
+	// Detail is the expandable per-step body (tool inputs/results, thinking text)
+	// folded away by default on the dashboard. Empty when there is nothing to fold.
+	Detail string `json:"detail"`
+	// InputTokens and OutputTokens are the per-message token counts for this step
+	// (per-assistant-message granularity; zero for non-assistant steps). They are
+	// for display only and are independent of the accumulated session/global totals.
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
 }
 
 // LiveSession captures agent session metadata tracked while a subprocess runs

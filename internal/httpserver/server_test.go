@@ -37,6 +37,10 @@ func sampleSnap() domain.Snapshot {
 			Activity: []domain.AgentActivity{{
 				Timestamp: now, Event: "turn_completed", TurnID: "1",
 				Message: "investigating the failing test",
+			}, {
+				Timestamp: now.Add(time.Second), Event: "notification", TurnID: "1",
+				Message: "Read", Detail: "→ Read {\"file_path\":\"/etc/hosts\"}",
+				InputTokens: 1500, OutputTokens: 342,
 			}},
 		}},
 		Retrying: []domain.RetryRow{{
@@ -80,11 +84,18 @@ func TestIssueDetail_FoundAndNotFound(t *testing.T) {
 	}
 	running := body["running"].(map[string]any)
 	activity := running["activity"].([]any)
-	if len(activity) != 1 {
-		t.Fatalf("detail activity len = %d, want 1", len(activity))
+	if len(activity) != 2 {
+		t.Fatalf("detail activity len = %d, want 2", len(activity))
 	}
 	if msg := activity[0].(map[string]any)["message"]; msg != "investigating the failing test" {
 		t.Errorf("detail activity message = %v", msg)
+	}
+	step := activity[1].(map[string]any)
+	if step["detail"] == "" || step["detail"] == nil {
+		t.Errorf("detail activity should carry tool detail, got %v", step["detail"])
+	}
+	if step["input_tokens"].(float64) != 1500 || step["output_tokens"].(float64) != 342 {
+		t.Errorf("detail activity tokens = in:%v out:%v", step["input_tokens"], step["output_tokens"])
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/UNKNOWN", nil)
@@ -154,6 +165,26 @@ func TestDashboardRenders(t *testing.T) {
 	}
 	if !contains(w.Body.String(), `http-equiv="refresh"`) {
 		t.Errorf("dashboard should auto-refresh")
+	}
+	body := w.Body.String()
+	// Steps with detail render as foldable <details> rows keyed for persistence.
+	if !contains(body, "<details data-key=") {
+		t.Errorf("dashboard should render foldable detail rows")
+	}
+	if !contains(body, "/etc/hosts") {
+		t.Errorf("dashboard should render tool detail inside the fold")
+	}
+	// Output-token badge on the collapsed summary line (342 -> "342 tok").
+	if !contains(body, "342 tok") {
+		t.Errorf("dashboard should show per-step output tokens")
+	}
+	// Input tokens shown in the expanded detail (1500 -> "1.5k in").
+	if !contains(body, "1.5k in") {
+		t.Errorf("dashboard should show per-step input tokens in detail")
+	}
+	// Minimal JS persists fold state across the auto-refresh.
+	if !contains(body, "localStorage") {
+		t.Errorf("dashboard should persist fold state via localStorage")
 	}
 }
 

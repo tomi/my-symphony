@@ -414,6 +414,32 @@ func TestTokenAggregationAcrossUpdates(t *testing.T) {
 	}
 }
 
+func TestStepUsageAndDetailOnActivityNotTotals(t *testing.T) {
+	cfg := testConfig(t, nil)
+	o := newTestOrch(t, cfg, &fakeTracker{}, &fakeWorkspace{})
+	o.rootCtx = context.Background()
+	o.state.Running["i1"] = &RunningEntry{Identifier: "AB-1", Issue: iss("i1", "AB-1", "In Progress", nil), Cancel: func() {}, StartedAt: time.Now()}
+
+	o.onAgentUpdate(AgentUpdate{IssueID: "i1", Msg: agent.Event{
+		Event: agent.EventNotification, Timestamp: time.Now(),
+		Message: "Read", Detail: "→ Read {\"file_path\":\"/x\"}",
+		StepUsage: &agent.Usage{InputTokens: 105, OutputTokens: 20, TotalTokens: 125},
+	}})
+
+	act := o.state.Running["i1"].Session.RecentActivity
+	if len(act) != 1 {
+		t.Fatalf("activity len = %d, want 1", len(act))
+	}
+	if act[0].Detail == "" || act[0].InputTokens != 105 || act[0].OutputTokens != 20 {
+		t.Errorf("step fields = %+v", act[0])
+	}
+	// StepUsage must never accumulate into session or global totals.
+	if o.state.ClaudeTotals.TotalTokens != 0 || o.state.Running["i1"].Session.ClaudeTotalTokens != 0 {
+		t.Errorf("StepUsage leaked into totals: global=%d session=%d",
+			o.state.ClaudeTotals.TotalTokens, o.state.Running["i1"].Session.ClaudeTotalTokens)
+	}
+}
+
 func TestRecentActivityCaptureAndCap(t *testing.T) {
 	cfg := testConfig(t, nil)
 	o := newTestOrch(t, cfg, &fakeTracker{}, &fakeWorkspace{})

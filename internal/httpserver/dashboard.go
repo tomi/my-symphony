@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"fmt"
 	"html/template"
 	"net/http"
 	"time"
@@ -37,6 +38,11 @@ var dashboardTmpl = template.Must(template.New("dashboard").Funcs(template.FuncM
 		}
 		return t.UTC().Format(time.RFC3339)
 	},
+	// fmtTimeNano yields a stable per-step key (nanosecond precision) used to
+	// persist a row's expanded state across the page's auto-refresh.
+	"fmtTimeNano": func(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) },
+	// fmtTokens renders a token count compactly (e.g. 342, 15.2k).
+	"fmtTokens": fmtTokens,
 }).Parse(`<!doctype html>
 <html lang="en">
 <head>
@@ -60,6 +66,15 @@ var dashboardTmpl = template.Must(template.New("dashboard").Funcs(template.FuncM
  .feed li { padding: 6px 10px; border-left: 3px solid #ddd; margin-bottom: 4px; background: #fafafa; font-size: 0.9rem; }
  .feed li .ts { color: #777; font-size: 0.8rem; margin-right: 0.5rem; }
  .feed .msg { white-space: pre-wrap; word-break: break-word; }
+ .feed details { border-left: 3px solid #cdd6e0; margin-bottom: 4px; background: #fafafa; font-size: 0.9rem; }
+ .feed details[open] { border-left-color: #6b8cae; background: #f4f7fb; }
+ .feed summary { padding: 6px 10px; cursor: pointer; list-style-position: inside; }
+ .feed summary::-webkit-details-marker { color: #999; }
+ .feed summary .msg { white-space: normal; }
+ .feed .tok { color: #3a6ea5; font-size: 0.8rem; margin-left: 0.4rem; white-space: nowrap; }
+ .feed .detail { margin: 0; padding: 6px 12px 10px 26px; white-space: pre-wrap; word-break: break-word;
+   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.82rem; color: #333; }
+ .feed .usage { color: #777; font-size: 0.78rem; padding: 0 12px 8px 26px; }
 </style>
 </head>
 <body>
@@ -97,10 +112,19 @@ var dashboardTmpl = template.Must(template.New("dashboard").Funcs(template.FuncM
  {{ range .Running }}
   {{ if .Activity }}
   {{ $shown = true }}
-  <h3>{{ .IssueIdentifier }} <span class="muted">turn {{ .TurnCount }}</span></h3>
+  {{ $id := .IssueIdentifier }}
+  <h3>{{ $id }} <span class="muted">turn {{ .TurnCount }}</span></h3>
   <ul>
    {{ range .Activity }}
-   <li><span class="ts">{{ fmtTime .Timestamp }}</span><span class="msg">{{ .Message }}</span></li>
+   {{ if .Detail }}
+   <li><details data-key="{{ $id }}|{{ fmtTimeNano .Timestamp }}">
+    <summary><span class="ts">{{ fmtTime .Timestamp }}</span><span class="msg">{{ .Message }}</span>{{ if .OutputTokens }}<span class="tok">· {{ fmtTokens .OutputTokens }} tok</span>{{ end }}</summary>
+    <pre class="detail">{{ .Detail }}</pre>
+    {{ if or .InputTokens .OutputTokens }}<div class="usage">{{ fmtTokens .InputTokens }} in / {{ fmtTokens .OutputTokens }} out</div>{{ end }}
+   </details></li>
+   {{ else }}
+   <li><span class="ts">{{ fmtTime .Timestamp }}</span><span class="msg">{{ .Message }}</span>{{ if .OutputTokens }}<span class="tok">· {{ fmtTokens .OutputTokens }} tok</span>{{ end }}</li>
+   {{ end }}
    {{ end }}
   </ul>
   {{ end }}
@@ -122,5 +146,39 @@ var dashboardTmpl = template.Must(template.New("dashboard").Funcs(template.FuncM
  <tr><td colspan="4" class="muted">empty</td></tr>
  {{ end }}
 </table>
+<script>
+// Persist which activity rows are expanded across the page's auto-refresh. The
+// dashboard reloads fully every few seconds; localStorage survives the reload so
+// an expanded step stays expanded. Keyed per step by issue identifier + timestamp.
+(function () {
+  var KEY = "symphony.openActivity";
+  function load() {
+    try { return new Set(JSON.parse(localStorage.getItem(KEY)) || []); }
+    catch (e) { return new Set(); }
+  }
+  function save(set) {
+    try { localStorage.setItem(KEY, JSON.stringify(Array.from(set))); } catch (e) {}
+  }
+  var open = load();
+  document.querySelectorAll("details[data-key]").forEach(function (d) {
+    var k = d.getAttribute("data-key");
+    if (open.has(k)) { d.open = true; }
+    d.addEventListener("toggle", function () {
+      var cur = load();
+      if (d.open) { cur.add(k); } else { cur.delete(k); }
+      save(cur);
+    });
+  });
+})();
+</script>
 </body>
 </html>`))
+
+// fmtTokens renders a token count compactly: exact below 1000, otherwise a
+// one-decimal thousands form (e.g. 342, 1.5k, 15.2k).
+func fmtTokens(n int) string {
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	}
+	return fmt.Sprintf("%.1fk", float64(n)/1000)
+}

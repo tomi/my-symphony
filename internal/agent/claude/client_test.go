@@ -42,6 +42,53 @@ func TestRunTurn_SuccessSessionAndUsage(t *testing.T) {
 	}
 }
 
+func TestRunTurn_StepDetailAndTokens(t *testing.T) {
+	ws := t.TempDir()
+	assistant := `{"type":"assistant","message":{"content":[` +
+		`{"type":"thinking","thinking":"weighing options"},` +
+		`{"type":"tool_use","name":"Read","input":{"file_path":"/etc/hosts"}}` +
+		`],"usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":5}}}`
+	user := `{"type":"user","message":{"content":[{"type":"tool_result","content":"127.0.0.1 localhost"}]}}`
+	result := `{"type":"result","is_error":false,"usage":{"input_tokens":10,"output_tokens":5}}`
+	cmd := `printf '%s\n' '{"type":"system","subtype":"init","session_id":"s1"}' '` + assistant + `' '` + user + `' '` + result + `'`
+	sess := (&Client{}).StartSession(ws, "AB-1", "T")
+	res, events, err := runTurn(t, Config{Command: cmd, TurnTimeoutMs: 5000, ReadTimeoutMs: 2000}, ws, sess)
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+
+	note := findEvent(events, agent.EventNotification)
+	if note == nil {
+		t.Fatalf("no assistant notification event: %+v", events)
+	}
+	if !strings.Contains(note.Message, "Read") || !strings.Contains(note.Message, "thinking") {
+		t.Errorf("summary missing tool name/thinking: %q", note.Message)
+	}
+	if !strings.Contains(note.Detail, "weighing options") || !strings.Contains(note.Detail, "/etc/hosts") {
+		t.Errorf("detail missing thinking/tool input: %q", note.Detail)
+	}
+	if note.StepUsage == nil || note.StepUsage.OutputTokens != 20 || note.StepUsage.InputTokens != 105 {
+		t.Errorf("step usage = %+v", note.StepUsage)
+	}
+	// Per-message StepUsage must not leak into the terminal turn usage, which is
+	// the only usage accumulated into totals.
+	if note.Usage != nil {
+		t.Errorf("assistant event must not carry accumulating Usage: %+v", note.Usage)
+	}
+
+	other := findEvent(events, agent.EventOtherMessage)
+	if other == nil || !strings.Contains(other.Message, "tool_result") {
+		t.Errorf("missing tool_result summary: %+v", other)
+	}
+	if other != nil && !strings.Contains(other.Detail, "127.0.0.1 localhost") {
+		t.Errorf("detail missing tool result content: %q", other.Detail)
+	}
+
+	if res.Usage == nil || res.Usage.InputTokens != 10 || res.Usage.OutputTokens != 5 {
+		t.Errorf("terminal usage = %+v (must be terminal result only)", res.Usage)
+	}
+}
+
 func TestRunTurn_CwdAndStdin(t *testing.T) {
 	ws := t.TempDir()
 	cwdFile := filepath.Join(ws, "cwd.txt")
@@ -159,12 +206,16 @@ func TestRunTurn_ReadTimeout(t *testing.T) {
 }
 
 func hasEvent(events []agent.Event, kind string) bool {
-	for _, e := range events {
-		if e.Event == kind {
-			return true
+	return findEvent(events, kind) != nil
+}
+
+func findEvent(events []agent.Event, kind string) *agent.Event {
+	for i := range events {
+		if events[i].Event == kind {
+			return &events[i]
 		}
 	}
-	return false
+	return nil
 }
 
 func assertClaudeCode(t *testing.T, err error, code string) {

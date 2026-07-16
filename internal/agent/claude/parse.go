@@ -14,6 +14,11 @@ import (
 // own tighter truncation for the compact "last message" field.
 const maxSummaryLen = 2000
 
+// maxDetailLen bounds the expandable per-step detail (tool inputs/results,
+// thinking text) carried alongside the summary. It is larger than maxSummaryLen
+// because the detail is folded away by default in the dashboard.
+const maxDetailLen = 4000
+
 // streamEvent is a loosely-typed stream-json event. The Claude Code CLI is the
 // source of truth for the exact shapes; we read leniently (SPEC §10.3).
 type streamEvent struct {
@@ -59,16 +64,22 @@ func (c *Client) handleEvent(s *Session, turnID string, pid *string, evt *stream
 		return false, nil, nil
 
 	case "assistant":
-		// Mid-stream assistant usage deltas are ignored (SPEC §13.5).
+		// Mid-stream assistant usage deltas are not accumulated into turn/global
+		// totals (the terminal result carries the authoritative cumulative usage,
+		// SPEC §13.5). We do surface the per-message usage as StepUsage purely for
+		// the observability feed's per-step token display.
+		summary, detail := describeMessage(evt.Message)
 		emit(agent.Event{Event: agent.EventNotification, Timestamp: now,
 			AgentPID: pid, SessionID: s.SessionID, TurnID: turnID,
-			Message: summarizeMessage(evt.Message), RateLimits: extractRateLimits(evt.raw)})
+			Message: summary, Detail: detail, StepUsage: extractMessageUsage(evt.Message),
+			RateLimits: extractRateLimits(evt.raw)})
 		return false, nil, nil
 
 	case "user":
+		summary, detail := describeMessage(evt.Message)
 		emit(agent.Event{Event: agent.EventOtherMessage, Timestamp: now,
 			AgentPID: pid, SessionID: s.SessionID, TurnID: turnID,
-			Message: summarizeMessage(evt.Message)})
+			Message: summary, Detail: detail})
 		return false, nil, nil
 
 	case "result":
@@ -122,6 +133,30 @@ func extractUsage(raw json.RawMessage) *agent.Usage {
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return nil
 	}
+	return usageFromMap(m)
+}
+
+// extractMessageUsage reads the per-message usage nested under an assistant
+// message object (message.usage). It is used only for the per-step token display
+// on the observability feed and is never accumulated into turn/global totals.
+func extractMessageUsage(raw json.RawMessage) *agent.Usage {
+	if len(raw) == 0 {
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil
+	}
+	u, ok := m["usage"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	return usageFromMap(u)
+}
+
+// usageFromMap builds a Usage from a leniently-typed usage map. Input tokens fold
+// in cache read/creation counts to match the terminal-result accounting.
+func usageFromMap(m map[string]any) *agent.Usage {
 	input := asInt(m["input_tokens"]) + asInt(m["cache_read_input_tokens"]) + asInt(m["cache_creation_input_tokens"])
 	output := asInt(m["output_tokens"])
 	return &agent.Usage{
@@ -143,33 +178,99 @@ func extractRateLimits(raw map[string]any) any {
 	return nil
 }
 
-func summarizeMessage(raw json.RawMessage) string {
+// describeMessage renders a message's content blocks into two views for the
+// observability feed: a compact one-line summary (tool names, block types, and
+// any assistant prose) and a fuller detail (thinking text, tool inputs, tool
+// results) that the dashboard folds away by default. Both are bounded.
+func describeMessage(raw json.RawMessage) (summary, detail string) {
 	if len(raw) == 0 {
-		return ""
+		return "", ""
 	}
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return ""
+		return "", ""
 	}
-	// Try to pull a concise text summary from content blocks.
-	if content, ok := m["content"].([]any); ok {
+	content, ok := m["content"].([]any)
+	if !ok {
+		return "", ""
+	}
+	var summaryParts, detailParts []string
+	for _, block := range content {
+		bm, ok := block.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch bm["type"] {
+		case "text":
+			if t, _ := bm["text"].(string); t != "" {
+				summaryParts = append(summaryParts, t)
+			}
+		case "thinking":
+			summaryParts = append(summaryParts, "thinking")
+			if t, _ := bm["thinking"].(string); t != "" {
+				detailParts = append(detailParts, "thinking\n"+t)
+			}
+		case "tool_use":
+			name, _ := bm["name"].(string)
+			if name == "" {
+				name = "tool_use"
+			}
+			summaryParts = append(summaryParts, name)
+			detailParts = append(detailParts, "→ "+name+" "+encodeInput(bm["input"]))
+		case "tool_result":
+			summaryParts = append(summaryParts, "tool_result")
+			if r := toolResultText(bm["content"]); r != "" {
+				detailParts = append(detailParts, "← result\n"+r)
+			}
+		default:
+			if typ, ok := bm["type"].(string); ok {
+				summaryParts = append(summaryParts, typ)
+			}
+		}
+	}
+	summary = truncate(strings.TrimSpace(strings.Join(summaryParts, " ")), maxSummaryLen)
+	detail = truncate(strings.TrimSpace(strings.Join(detailParts, "\n\n")), maxDetailLen)
+	return summary, detail
+}
+
+// encodeInput renders a tool_use input payload as compact JSON, falling back to a
+// best-effort string form when it cannot be marshaled.
+func encodeInput(input any) string {
+	if input == nil {
+		return "{}"
+	}
+	if b, err := json.Marshal(input); err == nil {
+		return string(b)
+	}
+	return ""
+}
+
+// toolResultText flattens a tool_result content field, which the CLI emits either
+// as a plain string or as an array of text sub-blocks.
+func toolResultText(content any) string {
+	switch c := content.(type) {
+	case string:
+		return c
+	case []any:
 		var parts []string
-		for _, block := range content {
+		for _, block := range c {
 			if bm, ok := block.(map[string]any); ok {
-				if t, ok := bm["text"].(string); ok {
+				if t, _ := bm["text"].(string); t != "" {
 					parts = append(parts, t)
-				} else if typ, ok := bm["type"].(string); ok {
-					parts = append(parts, typ)
 				}
 			}
 		}
-		s := strings.TrimSpace(strings.Join(parts, " "))
-		if len(s) > maxSummaryLen {
-			s = s[:maxSummaryLen]
-		}
-		return s
+		return strings.Join(parts, "\n")
+	default:
+		return ""
 	}
-	return ""
+}
+
+func truncate(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
 }
 
 func asInt(v any) int {
