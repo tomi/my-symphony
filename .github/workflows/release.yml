@@ -3,8 +3,16 @@ name: Release
 on:
   # Release on every push to main. Include "[skip release]" in the commit
   # message to skip the release for that push (see the job's `if` below).
+  # Pushes that only touch docs, CI config, or other non-shippable files
+  # are ignored so they don't cut a new release.
   push:
     branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - ".github/**"
+      - ".gitignore"
+      - "LICENSE"
   workflow_dispatch:
 
 # Ensure releases run one at a time so version bumps don't race.
