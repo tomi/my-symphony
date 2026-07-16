@@ -501,9 +501,18 @@ Each entry is an object with optional fields:
   Non-positive or non-numeric values are ignored (global default applies).
 
 The override is resolved from the issue's state at dispatch (§16.4). The prompt
-template is selected once per worker attempt; continuation turns keep their fixed
-guidance (§10.2). Changes SHOULD be re-applied at runtime for subsequent dispatches
-(§6.2).
+template is selected once per worker attempt; continuation turns keep continuation
+guidance aligned with the dispatched prompt mode — a worker bound to a per-state
+prompt override (e.g. a review prompt) MUST NOT emit implementation-flavored
+guidance on later turns (§10.2). Changes SHOULD be re-applied at runtime for
+subsequent dispatches (§6.2).
+
+At dispatch, the resolved routing for the issue's state — whether a per-state
+prompt override applies (versus the default WORKFLOW.md body), plus the effective
+model, reasoning effort, and turn budget — SHOULD be logged so a mis-keyed or
+missing per-state prompt is observable rather than silently degrading to the
+default. Implementations SHOULD additionally log a one-line routing summary per
+active state at startup for the same reason.
 
 ### 5.4 Prompt Template Contract
 
@@ -1018,7 +1027,10 @@ Symphony additionally requires the client to:
   (for example `pending`) from session start and resolve it from the first `system`/`init` event.
 - Start the first turn with the rendered issue prompt written to `stdin`.
 - Start later in-worker continuation turns by re-spawning the CLI with `--resume <session_id>` and
-  sending only continuation guidance rather than resending the original issue prompt.
+  sending only continuation guidance rather than resending the original issue prompt. The
+  continuation guidance MUST stay aligned with the dispatched prompt mode: a worker bound to a
+  per-state prompt override (§5.3.7) keeps that task's framing instead of the default
+  implementation guidance.
 - Rely on the CLI's `cwd` (the workspace directory) as the working directory for every turn.
 - Supply the implementation's documented permission and sandbox posture using Claude Code CLI flags
   inside `claude.command`.

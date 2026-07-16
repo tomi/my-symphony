@@ -39,24 +39,30 @@ type Backend interface {
 // DefaultRunner implements Runner over a workspace manager, agent backend, and
 // tracker refresher (SPEC §16.5).
 type DefaultRunner struct {
-	ws           WorkspaceManager
-	backend      Backend
-	tracker      TrackerRefresher
-	template     string
-	activeStates map[string]bool
-	maxTurns     int
-	logger       *logging.Logger
+	ws             WorkspaceManager
+	backend        Backend
+	tracker        TrackerRefresher
+	template       string
+	promptOverride bool
+	activeStates   map[string]bool
+	maxTurns       int
+	logger         *logging.Logger
 }
 
 // RunnerConfig configures a DefaultRunner.
 type RunnerConfig struct {
-	Workspace    WorkspaceManager
-	Backend      Backend
-	Tracker      TrackerRefresher
-	Template     string
-	ActiveStates []string
-	MaxTurns     int
-	Logger       *logging.Logger
+	Workspace WorkspaceManager
+	Backend   Backend
+	Tracker   TrackerRefresher
+	Template  string
+	// PromptOverride is true when Template is a per-state prompt override (e.g. a
+	// review prompt) rather than the default implementation body. Continuation
+	// turns stay aligned with that mode instead of falling back to
+	// implementation-flavored guidance (SPEC §5.3.7, §16.5).
+	PromptOverride bool
+	ActiveStates   []string
+	MaxTurns       int
+	Logger         *logging.Logger
 }
 
 // NewRunner builds a DefaultRunner.
@@ -70,13 +76,14 @@ func NewRunner(cfg RunnerConfig) *DefaultRunner {
 		maxTurns = 1
 	}
 	return &DefaultRunner{
-		ws:           cfg.Workspace,
-		backend:      cfg.Backend,
-		tracker:      cfg.Tracker,
-		template:     cfg.Template,
-		activeStates: active,
-		maxTurns:     maxTurns,
-		logger:       cfg.Logger,
+		ws:             cfg.Workspace,
+		backend:        cfg.Backend,
+		tracker:        cfg.Tracker,
+		template:       cfg.Template,
+		promptOverride: cfg.PromptOverride,
+		activeStates:   active,
+		maxTurns:       maxTurns,
+		logger:         cfg.Logger,
 	}
 }
 
@@ -158,6 +165,15 @@ func (r *DefaultRunner) buildTurnPrompt(issue domain.Issue, attempt *int, turn i
 		return prompt.Render(r.template, issue, attempt)
 	}
 	var b strings.Builder
+	if r.promptOverride {
+		// This worker is bound to a per-state prompt (e.g. review). Keep the
+		// continuation aligned with that task rather than implying implementation
+		// work (SPEC §5.3.7).
+		fmt.Fprintf(&b, "Continue with %s: %s\n\n", issue.Identifier, issue.Title)
+		b.WriteString("The issue is still active. Keep following your original task instructions above. ")
+		b.WriteString("Do not restart from scratch; build on what you have already done in this session.")
+		return b.String(), nil
+	}
 	fmt.Fprintf(&b, "Continue working on %s: %s\n\n", issue.Identifier, issue.Title)
 	b.WriteString("The issue is still active. Review what remains to be done and continue. ")
 	b.WriteString("Do not restart from scratch; build on the work already in this session.")

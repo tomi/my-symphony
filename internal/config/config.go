@@ -288,6 +288,15 @@ func (c *Config) PromptForState(state, def string) string {
 	return def
 }
 
+// HasPromptOverride reports whether a tracker state binds its own prompt body
+// (e.g. a review status pointing at prompts/review.md) rather than falling back
+// to the default WORKFLOW.md body. Used to surface the dispatched "mode" in logs
+// and to keep continuation turns aligned with that mode (SPEC §5.3.7).
+func (c *Config) HasPromptOverride(state string) bool {
+	ov, ok := c.States[normState(state)]
+	return ok && ov.PromptTemplate != ""
+}
+
 // normState normalizes a tracker state name for map lookups (SPEC §8.3).
 func normState(state string) string {
 	return strings.ToLower(strings.TrimSpace(state))

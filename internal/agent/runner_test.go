@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/tomi/my-symphony/internal/domain"
@@ -106,6 +107,58 @@ func TestRunner_ContinuesUpToMaxTurns(t *testing.T) {
 	}
 	if be.prompts[1] == be.prompts[0] {
 		t.Errorf("continuation turn should not resend original prompt")
+	}
+}
+
+func TestRunner_ContinuationStaysInOverrideMode(t *testing.T) {
+	ws := &fakeWS{}
+	be := &fakeBackend{}
+	tr := &fakeRefresher{states: []string{"AI Review", "AI Review", "AI Review"}}
+	// Dispatched in AI Review with a prompt override (e.g. review). Continuation
+	// turns must not switch to implementation-flavored guidance.
+	r := NewRunner(RunnerConfig{
+		Workspace: ws, Backend: be, Tracker: tr,
+		Template:       "Review {{ issue.identifier }}",
+		PromptOverride: true,
+		ActiveStates:   []string{"AI Review"}, MaxTurns: 3,
+	})
+
+	err := r.Run(context.Background(), domain.Issue{ID: "i1", Identifier: "AB-1", Title: "t", State: "AI Review"}, nil, func(Event) {})
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if len(be.prompts) != 3 {
+		t.Fatalf("expected 3 turns, got %d", len(be.prompts))
+	}
+	if be.prompts[0] != "Review AB-1" {
+		t.Errorf("turn 1 should render the override template, got %q", be.prompts[0])
+	}
+	// Continuation turns keep the override framing and drop implementation phrasing.
+	for _, p := range be.prompts[1:] {
+		if strings.Contains(p, "Continue working on") {
+			t.Errorf("override continuation leaked implementation phrasing: %q", p)
+		}
+		if !strings.Contains(p, "original task instructions") {
+			t.Errorf("override continuation should reference the bound task, got %q", p)
+		}
+	}
+}
+
+func TestRunner_ContinuationDefaultModeUnchanged(t *testing.T) {
+	ws := &fakeWS{}
+	be := &fakeBackend{}
+	tr := &fakeRefresher{states: []string{"In Progress", "In Progress"}}
+	r := newRunner(ws, be, tr, "Task {{ issue.identifier }}", 2)
+
+	err := r.Run(context.Background(), domain.Issue{ID: "i1", Identifier: "AB-1", Title: "t", State: "In Progress"}, nil, func(Event) {})
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if len(be.prompts) != 2 {
+		t.Fatalf("expected 2 turns, got %d", len(be.prompts))
+	}
+	if !strings.Contains(be.prompts[1], "Continue working on") {
+		t.Errorf("default continuation phrasing changed: %q", be.prompts[1])
 	}
 }
 
