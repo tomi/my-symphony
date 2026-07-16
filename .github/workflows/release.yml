@@ -1,6 +1,8 @@
 name: Release
 
 on:
+  # Release on every push to main. Include "[skip release]" in the commit
+  # message to skip the release for that push (see the job's `if` below).
   push:
     branches: [main]
   workflow_dispatch:
@@ -17,6 +19,12 @@ jobs:
   release-linux-amd64:
     name: Build linux/amd64 release
     runs-on: ubuntu-latest
+    # Skip the release when the triggering commit message contains
+    # "[skip release]" (or "[release skip]"). Manual runs always release.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (!contains(github.event.head_commit.message, '[skip release]') &&
+       !contains(github.event.head_commit.message, '[release skip]'))
     env:
       GOOS: linux
       GOARCH: amd64
