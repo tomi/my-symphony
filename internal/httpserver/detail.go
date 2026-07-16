@@ -75,10 +75,13 @@ func activityList(activity []domain.AgentActivity) []map[string]any {
 	out := make([]map[string]any, 0, len(activity))
 	for _, a := range activity {
 		out = append(out, map[string]any{
-			"timestamp": a.Timestamp,
-			"event":     a.Event,
-			"turn_id":   a.TurnID,
-			"message":   a.Message,
+			"timestamp":     a.Timestamp,
+			"event":         a.Event,
+			"turn_id":       a.TurnID,
+			"message":       a.Message,
+			"detail":        a.Detail,
+			"input_tokens":  a.InputTokens,
+			"output_tokens": a.OutputTokens,
 		})
 	}
 	return out

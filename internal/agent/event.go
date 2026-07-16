@@ -35,13 +35,22 @@ type Usage struct {
 
 // Event is a normalized runtime event forwarded to the orchestrator (SPEC §10.4).
 type Event struct {
-	Event      string
-	Timestamp  time.Time
-	AgentPID   *string
-	SessionID  string
-	TurnID     string
-	Message    string
-	Usage      *Usage
+	Event     string
+	Timestamp time.Time
+	AgentPID  *string
+	SessionID string
+	TurnID    string
+	Message   string
+	// Detail is the expandable per-step body for the observability feed (tool
+	// inputs/results, thinking text). Empty for events without block content.
+	Detail string
+	// Usage is authoritative per-turn usage from a terminal result event; it is
+	// accumulated into session and global totals.
+	Usage *Usage
+	// StepUsage is the per-message usage from an assistant event, surfaced for the
+	// feed's per-step token display only. It is NEVER accumulated into totals
+	// (that would double-count the terminal-result usage).
+	StepUsage  *Usage
 	RateLimits any
 }
 

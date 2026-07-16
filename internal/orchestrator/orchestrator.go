@@ -225,12 +225,20 @@ func (o *Orchestrator) onAgentUpdate(ev AgentUpdate) {
 	e.Session.LastAgentEvent = &event
 	if m.Message != "" {
 		e.Session.LastAgentMessage = logging.Truncate(m.Message)
-		e.Session.RecentActivity = appendActivity(e.Session.RecentActivity, domain.AgentActivity{
+		act := domain.AgentActivity{
 			Timestamp: ts,
 			Event:     event,
 			TurnID:    m.TurnID,
 			Message:   m.Message,
-		})
+			Detail:    m.Detail,
+		}
+		// Per-step tokens are display-only; they are NOT accumulated into totals
+		// (the terminal-result Usage below is the authoritative accounting).
+		if m.StepUsage != nil {
+			act.InputTokens = m.StepUsage.InputTokens
+			act.OutputTokens = m.StepUsage.OutputTokens
+		}
+		e.Session.RecentActivity = appendActivity(e.Session.RecentActivity, act)
 	}
 	if m.SessionID != "" && m.SessionID != "pending" {
 		e.Session.SessionID = m.SessionID
